@@ -1,0 +1,13 @@
+[workspace]
+members = ["libe1", "hello", "ush"]
+resolver = "2"
+
+[profile.dev]
+opt-level = 1
+debug = false
+panic = "abort"
+
+[profile.release]
+opt-level = "s"
+debug = false
+panic = "abort"

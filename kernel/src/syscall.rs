@@ -1,0 +1,585 @@
+//! int 0x80 dispatch table for system calls.
+//!
+//! Arguments: rax=syscall number, rdi, rsi, rdx, r10, r8, r9.
+//! Frame registers are used to read/write across the syscall boundary.
+
+use crate::idt::IsrFrame;
+use crate::{sched, e1fss, console, brand, println, print};
+use core::str;
+
+pub fn dispatch(frame: &mut IsrFrame) {
+    // Linux-ABI processes route everything through e1wine
+    if let Some(p) = sched::current() {
+        if p.is_linux {
+            frame.rax = crate::linux_compat::linux_dispatch(frame) as u64;
+            return;
+        }
+    }
+    let n = frame.rax;
+    let r = match n {
+        0 => sys_exit(frame.rdi as i32),
+        1 => sys_write(frame.rdi as usize, frame.rsi as *const u8, frame.rdx as usize),
+        2 => sys_read(frame.rdi as usize, frame.rsi as *mut u8, frame.rdx as usize),
+        3 => sys_open(frame.rdi as *const u8),
+        4 => sys_close(frame.rdi as usize),
+        5 => sys_readdir(frame.rdi as usize),
+        6 => -1, // fork: not supported (v1)
+        7 => 0,  // waitpid: exec is synchronous
+        8 => sys_exec(frame, frame.rdi as *const u8),
+        9 => -1, // mmap: v1 simplified
+        10 => 0, // munmap
+        11 => sys_brk(frame.rdi),
+        12 => sched::current_pid() as i64,
+        13 => sys_getcwd(frame.rdi as *mut u8, frame.rsi),
+        14 => 0, // chdir: single root (v1)
+        15 => -1, // ioctl
+        16 => 0,  // fcntl
+        17 => sys_stat(frame.rdi as *const u8),
+        18 => sys_gettimeofday(frame.rdi as *mut u64),
+        19 => 0, // getppid
+        20 => -1, // dup2
+        21 => -1, // pipe
+        22 => 0,  // alarm
+        23 => 0,  // kill (v1 no-op)
+        24 => sys_yield(frame),
+        25 => sys_ls(frame.rdi as *mut u8, frame.rsi),
+        26 => sys_readfile(frame.rdi as *const u8, frame.rsi as *mut u8, frame.rdx as usize),
+        27 => sys_create(frame.rdi as *const u8, frame.rsi as *const u8, frame.rdx as usize),
+        28 => sys_ps(frame.rdi as *mut u8, frame.rsi),
+        // GUI / framebuffer (M5)
+        64 => sys_fb_info(frame.rdi as *mut u32),
+        65 => 0, // fb flush: no-op for PIO framebuffer
+        66 => sys_getkey(frame.rdi as *mut u8),
+        67 => sys_mouse_poll(frame.rdi as *mut i32),
+        68 => sys_fb_map(),
+        69 => sys_fb_backbuf(),
+        80 => sys_wine(frame, frame.rdi as *const u8),
+        // .rit package operations (M4)
+        90 => sys_rit_install(frame.rdi as *const u8),
+        91 => sys_rit_list(frame.rdi as *mut u8, frame.rsi),
+        // raw block access to the second disk (primary slave, M6)
+        92 => sys_readblocks(frame.rdi as u64, frame.rsi as *mut u8, frame.rdx as usize),
+        // APFS write support (M6 tail): raw block write to the second disk
+        96 => sys_writeblocks(frame.rdi as u64, frame.rsi as *const u8, frame.rdx as usize),
+        // exec with one string argument (for e1vfsx <file.com>)
+        97 => sys_exec_arg(frame, frame.rdi as *const u8, frame.rsi as *const u8),
+        // activation (M7)
+        93 => sys_try_activate(frame.rdi as *const u8, frame.rsi as *mut u8),
+        94 => sys_set_activated(),
+        95 => sys_brand_status(),
+        _ => {
+            println!("unknown syscall {}", n);
+            -1i64
+        }
+    };
+    frame.rax = r as u64;
+}
+
+fn sys_exit(code: i32) -> i64 {
+    sched::exit(code);
+    0
+}
+
+fn sys_write(fd: usize, buf: *const u8, len: usize) -> i64 {
+    if len == 0 { return 0; }
+    let slice = unsafe { core::slice::from_raw_parts(buf, len) };
+    match fd {
+        0 => return -1, // stdin
+        1 | 2 => {
+            // irq-off: a preempted lock holder would deadlock the next printer
+            let (flags, c) = console::CONSOLE.lock_irq();
+            for &b in slice {
+                c.put_byte(b);
+            }
+            unsafe { console::CONSOLE.unlock_irq(flags) };
+        }
+        _ => return -1,
+    }
+    len as i64
+}
+
+/// Read one line from fd 0 (console), with echo + backspace.
+/// Dual-source: PS/2 keyboard (GUI mode) OR UART COM1 (headless mode),
+/// whichever has input first.  Echo goes to ALL three consoles
+/// (framebuffer glyph console + VGA text + UART).
+fn sys_read(fd: usize, buf: *mut u8, len: usize) -> i64 {
+    if fd != 0 || len == 0 {
+        return -1;
+    }
+    let mut n = 0usize;
+    loop {
+        // Simple blocking read: UART first, then keyboard as fallback
+        let c: Option<u8> = loop {
+            if let Some(uc) = console::uart_getc() {
+                match uc {
+                    b'\r' | b'\n' => break Some(b'\n'),
+                    8 | 0x7F => break Some(8),
+                    0x20..=0x7E => break Some(uc),
+                    _ => {}
+                }
+            }
+            if let Some(ev) = crate::keyboard::poll() {
+                let kc = ev.code;
+                match kc {
+                    b'\r' | b'\n' => break Some(b'\n'),
+                    8 | 0x7F => break Some(8),
+                    0x20..=0x7E => break Some(kc),
+                    _ => {}
+                }
+            }
+            unsafe { core::arch::asm!("sti; hlt") };
+        };
+        let c = match c { Some(c) => c, None => continue };
+
+        if c == b'\n' {
+            print!("\n");
+            break;
+        } else if c == 8 {
+            if n > 0 {
+                n -= 1;
+                print!("\x08 \x08");
+            }
+        } else {
+            if n < len {
+                unsafe { *buf.add(n) = c };
+                n += 1;
+                print!("{}", c as char);
+            }
+        }
+    }
+    n as i64
+}
+
+fn sys_open(path: *const u8) -> i64 {
+    let s = unsafe { cstr(path) };
+    if e1fss::open(s).is_ok() {
+        1 // v1: always return fd 1
+    } else {
+        -1
+    }
+}
+
+fn sys_close(_fd: usize) -> i64 {
+    0
+}
+
+fn sys_readdir(_fd: usize) -> i64 {
+    -1 // use open/list instead
+}
+
+/// exec: spawn the ELF as a child of the caller and block until it exits.
+/// Returns the child pid (written into the frame before blocking, and again
+/// via the normal return path after we are woken).
+fn sys_exec(frame: &mut IsrFrame, path: *const u8) -> i64 {
+    let s = unsafe { cstr(path) };
+    let data = match e1fss::read_file(s) {
+        Ok(d) => d,
+        Err(_) => return -1,
+    };
+    let me = sched::current_pid();
+    let pid = match sched::spawn_user(s.as_bytes(), &data, 0, me, None) {
+        Some(p) => p,
+        None => return -1,
+    };
+    // deliver the child pid through the frame we snapshot: the caller resumes
+    // from this frame when woken (the nested reschedule frame is discarded)
+    frame.rax = pid as u64;
+    sched::snapshot_current(frame);
+    sched::block_current();
+    pid as i64
+}
+
+fn sys_brk(addr: u64) -> i64 {
+    if addr == 0 {
+        0x3000000i64 // simplified heap start hint
+    } else {
+        addr as i64
+    }
+}
+
+fn sys_getcwd(buf: *mut u8, len: u64) -> i64 {
+    let s = b"/\0";
+    let l = s.len().min(len as usize);
+    unsafe { core::ptr::copy_nonoverlapping(s.as_ptr(), buf, l) };
+    0
+}
+
+fn sys_stat(path: *const u8) -> i64 {
+    let s = unsafe { cstr(path) };
+    match e1fss::open(s) {
+        Ok(f) => f.size as i64,
+        Err(_) => -1,
+    }
+}
+
+fn sys_gettimeofday(tv: *mut u64) -> i64 {
+    let t = crate::pit::ticks() * 10; // milliseconds
+    unsafe { *tv = t; }
+    0
+}
+
+fn sys_yield(frame: &mut IsrFrame) -> i64 {
+    sched::yield_current(frame);
+    0
+}
+
+/// 25: write a newline-separated list of root-dir names into buf.
+fn sys_ls(buf: *mut u8, maxlen: u64) -> i64 {
+    let entries = match e1fss::list_dir("/") {
+        Ok(v) => v,
+        Err(_) => return -1,
+    };
+    let mut pos = 0usize;
+    let cap = maxlen as usize;
+    for e in entries {
+        let nlen = e.name.iter().position(|&c| c == 0).unwrap_or(59);
+        if pos + nlen + 1 > cap {
+            break;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(e.name.as_ptr(), buf.add(pos), nlen);
+            *buf.add(pos + nlen) = b'\n';
+        }
+        pos += nlen + 1;
+    }
+    pos as i64
+}
+
+/// 26: read a whole file into buf.
+fn sys_readfile(path: *const u8, buf: *mut u8, len: usize) -> i64 {
+    let s = unsafe { cstr(path) };
+    match e1fss::read_file(s) {
+        Ok(data) => {
+            let n = data.len().min(len);
+            unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), buf, n) };
+            n as i64
+        }
+        Err(_) => -1,
+    }
+}
+
+/// 27: create a file with the given content.
+fn sys_create(path: *const u8, buf: *const u8, len: usize) -> i64 {
+    let s = unsafe { cstr(path) };
+    let data = unsafe { core::slice::from_raw_parts(buf, len) };
+    match e1fss::create(s, data) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// 28: write a process table listing into buf.
+fn sys_ps(buf: *mut u8, maxlen: u64) -> i64 {
+    let mut slots = [(0usize, [0u8; 32], sched::State::Zombie); 16];
+    let n = sched::list(&mut slots);
+    let mut pos = 0usize;
+    let cap = maxlen as usize;
+    for s in slots.iter().take(n) {
+        let (pid, name, state) = *s;
+        let nlen = name.iter().position(|&c| c == 0).unwrap_or(32);
+        let st = match state {
+            sched::State::Ready => "ready",
+            sched::State::Running => "run",
+            sched::State::Blocked => "block",
+            sched::State::Zombie => "zombie",
+        };
+        let line = alloc::string::String::new();
+        let mut line = line;
+        use core::fmt::Write as _;
+        let _ = write!(line, "{} ", pid);
+        for &c in name.iter().take(nlen) {
+            line.push(c as char);
+        }
+        line.push(' ');
+        line.push_str(st);
+        line.push('\n');
+        let bytes = line.as_bytes();
+        if pos + bytes.len() > cap {
+            break;
+        }
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.add(pos), bytes.len()) };
+        pos += bytes.len();
+    }
+    pos as i64
+}
+
+// ---------------------------------------------------------------------------
+// M4: e1wine + .rit package syscalls
+// ---------------------------------------------------------------------------
+/// 80: spawn a Linux-ABI ELF from the fs as a child; block until it exits.
+/// rdi points to a buffer of NUL-separated argv strings, terminated by an
+/// empty string ("prog\0arg1\0arg2\0\0").
+fn sys_wine(frame: &mut IsrFrame, path: *const u8) -> i64 {
+    let mut args: alloc::vec::Vec<alloc::vec::Vec<u8>> = alloc::vec::Vec::new();
+    let mut p = path;
+    while args.len() < 8 {
+        let s = unsafe { cstr(p) };
+        if s.is_empty() {
+            break;
+        }
+        args.push(s.as_bytes().to_vec());
+        p = unsafe { p.add(s.len() + 1) };
+    }
+    if args.is_empty() {
+        return -1;
+    }
+    let prog = alloc::string::String::from_utf8_lossy(&args[0]).into_owned();
+    let data = match e1fss::read_file(&prog) {
+        Ok(d) => d,
+        Err(_) => return -1,
+    };
+    let argv: alloc::vec::Vec<&[u8]> = args.iter().map(|v| v.as_slice()).collect();
+    let me = sched::current_pid();
+    let pid = match sched::spawn_linux(&argv, &data, me) {
+        Some(p) => p,
+        None => return -1,
+    };
+    // deliver the child pid through the frame we snapshot (see sys_exec)
+    frame.rax = pid as u64;
+    sched::snapshot_current(frame);
+    sched::block_current();
+    pid as i64
+}
+
+/// 90: install a .rit package file from the fs.
+fn sys_rit_install(path: *const u8) -> i64 {
+    let s = unsafe { cstr(path) };
+    match e1fss::read_file(s) {
+        Ok(data) => match crate::rit::install(&data) {
+            Ok(()) => 0,
+            Err(e) => {
+                println!("rit: {}", e);
+                -1
+            }
+        },
+        Err(_) => -1,
+    }
+}
+
+/// 91: list installed package names (newline separated).
+fn sys_rit_list(buf: *mut u8, maxlen: u64) -> i64 {
+    let pkgs = match crate::rit::list() {
+        Ok(v) => v,
+        Err(_) => return -1,
+    };
+    let mut pos = 0usize;
+    let cap = maxlen as usize;
+    for (name, _) in pkgs {
+        if pos + name.len() + 1 > cap {
+            break;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(name.as_bytes().as_ptr(), buf.add(pos), name.len());
+            *buf.add(pos + name.len()) = b'\n';
+        }
+        pos += name.len() + 1;
+    }
+    pos as i64
+}
+
+/// 92: read raw 512B sectors from the second disk (primary slave) into a
+/// user buffer. rdi=lba, rsi=buf, rdx=bytes. Returns bytes read or -1.
+fn sys_readblocks(lba: u64, buf: *mut u8, bytes: usize) -> i64 {
+    if buf.is_null() || bytes == 0 || bytes % 512 != 0 {
+        return -1;
+    }
+    // ATA sector-count register is 8-bit; 0 means 256 but we cap at 255.
+    let count = (bytes / 512).min(255) as u8;
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf, count as usize * 512) };
+    match crate::ata::read_sectors_on(1, lba as u32, count, slice) {
+        Ok(()) => count as i64 * 512,
+        Err(_) => -1,
+    }
+}
+
+/// 96: write raw 512B sectors to the second disk (primary slave) from a
+/// user buffer. rdi=lba, rsi=buf, rdx=bytes. Returns bytes written or -1.
+fn sys_writeblocks(lba: u64, buf: *const u8, bytes: usize) -> i64 {
+    if buf.is_null() || bytes == 0 || bytes % 512 != 0 {
+        return -1;
+    }
+    let count = (bytes / 512).min(255) as u8;
+    let slice = unsafe { core::slice::from_raw_parts(buf, count as usize * 512) };
+    match crate::ata::write_sectors_on(1, lba as u32, count, slice) {
+        Ok(()) => count as i64 * 512,
+        Err(_) => -1,
+    }
+}
+
+/// 97: exec with one string argument. rdi = path, rsi = arg (both
+/// NUL-terminated). The argument is copied into the child's (still empty)
+/// user stack and its address is passed in rdi; the child declares
+/// `_start(arg: u64)`. rsi=0 or empty arg behaves like plain exec.
+fn sys_exec_arg(frame: &mut IsrFrame, path: *const u8, arg: *const u8) -> i64 {
+    let s = unsafe { cstr(path) };
+    let data = match e1fss::read_file(s) {
+        Ok(d) => d,
+        Err(_) => return -1,
+    };
+    // copy the argument into kernel memory first (the user buffer becomes
+    // invalid once we reschedule)
+    let mut arg_buf = [0u8; 128];
+    let mut arg_len = 0usize;
+    if !arg.is_null() {
+        unsafe {
+            while arg_len < 127 && *arg.add(arg_len) != 0 {
+                arg_buf[arg_len] = *arg.add(arg_len);
+                arg_len += 1;
+            }
+        }
+    }
+    let me = sched::current_pid();
+    let pid = match sched::spawn_user(s.as_bytes(), &data, 0, me, Some(&arg_buf[..arg_len])) {
+        Some(p) => p,
+        None => return -1,
+    };
+    frame.rax = pid as u64;
+    sched::snapshot_current(frame);
+    sched::block_current();
+    pid as i64
+}
+
+// ---------------------------------------------------------------------------
+// Activation syscalls (M7)
+// ---------------------------------------------------------------------------
+
+/// 93: attempt activation with a user-typed key string.
+/// rdi = key (NUL-terminated), rsi = 4-byte out for serial (kernel writes
+///   "PERM" or "NN\0\0"). Returns 0 on success, negative on failure.
+fn sys_try_activate(key_ptr: *const u8, serial_out: *mut u8) -> i64 {
+    if key_ptr.is_null() || serial_out.is_null() {
+        return -1;
+    }
+    // walk key bytes up to first NUL or 32 chars
+    let mut key_buf = [0u8; 64];
+    let mut n = 0usize;
+    while n < 64 {
+        let b = unsafe { *key_ptr.add(n) };
+        if b == 0 { break; }
+        key_buf[n] = b;
+        n += 1;
+    }
+    let mut serial = [0u8; 4];
+    let r = brand::try_activate(&key_buf[..n.min(n)], &mut serial);
+    if r == 0 {
+        unsafe {
+            serial_out.write_unaligned(serial[0]);
+            serial_out.add(1).write_unaligned(serial[1]);
+            serial_out.add(2).write_unaligned(serial[2]);
+            serial_out.add(3).write_unaligned(serial[3]);
+        }
+    }
+    r
+}
+
+/// 94: mark system as activated (called at boot after reading license.cfg
+/// on a previously-activated machine).
+fn sys_set_activated() -> i64 {
+    brand::set_activated();
+    0
+}
+
+/// 95: query activation status. Returns 1 if system is activated and
+/// premium tAbLeOS features are unlocked, 0 otherwise.
+fn sys_brand_status() -> i64 {
+    if brand::is_activated() { 1 } else { 0 }
+}
+
+// ---------------------------------------------------------------------------
+// GUI syscalls (M5 uses these)
+// ---------------------------------------------------------------------------
+fn sys_fb_info(buf: *mut u32) -> i64 {
+    let bi = crate::bootinfo::get();
+    unsafe {
+        *buf.add(0) = bi.fb_phys;
+        *buf.add(1) = bi.fb_width as u32;
+        *buf.add(2) = bi.fb_height as u32;
+        *buf.add(3) = bi.fb_pitch;
+        *buf.add(4) = bi.fb_bpp as u32;
+    }
+    0
+}
+
+fn sys_getkey(buf: *mut u8) -> i64 {
+    match crate::keyboard::poll() {
+        Some(ev) => {
+            unsafe {
+                *buf = ev.code;
+                *buf.add(1) = if ev.pressed { 1 } else { 0 };
+                *buf.add(2) = if ev.alt { 1 } else { 0 };
+                *buf.add(3) = if ev.ctrl { 1 } else { 0 };
+                *buf.add(4) = if ev.shift { 1 } else { 0 };
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
+fn sys_mouse_poll(buf: *mut i32) -> i64 {
+    let (x, y, buttons, click) = crate::mouse::poll();
+    unsafe {
+        *buf = x;
+        *buf.add(1) = y;
+        *buf.add(2) = buttons as i32;
+    }
+    click as i64
+}
+
+/// 68: map the framebuffer (identity, RW+USER) into the caller's address
+/// space. e1wm calls this once before touching the physical fb address.
+fn sys_fb_map() -> i64 {
+    let bi = crate::bootinfo::get();
+    if bi.fb_phys == 0 {
+        return -1;
+    }
+    let pml4 = sched::current_pml4();
+    let size = bi.fb_pitch as u64 * bi.fb_height as u64;
+    // PCD: framebuffer is MMIO/VRAM — write-back caching would hold the
+    // newest pixels in the CPU cache and the host display would only ever
+    // see stale (write-back-evicted) frames
+    let flags = crate::vmm::PTE_RW | crate::vmm::PTE_USER | crate::vmm::PTE_PCD;
+    let mut off = 0u64;
+    while off < size {
+        let va = bi.fb_phys as u64 + off;
+        if !crate::vmm::map_page(pml4, va, va, flags) {
+            println!("fbmap: map fail at off={:#x}", off);
+            return -1;
+        }
+        off += 4096;
+    }
+    println!("fbmap: ok pml4={:#x} size={:#x}", pml4, size);
+    0
+}
+
+/// 69: allocate a fb-sized back buffer in cached RAM and map it RW+USER into
+/// the caller at a fixed VA. The WM draws into this fast buffer and blits the
+/// finished frame to the (uncacheable) fb in one short pass — drawing
+/// directly into UC fb memory leaves the display sampling torn half-drawn
+/// frames most of the time. Returns the buffer VA or -1.
+fn sys_fb_backbuf() -> i64 {
+    const BB_VA: u64 = 0x5000_0000;
+    let bi = crate::bootinfo::get();
+    if bi.fb_phys == 0 {
+        return -1;
+    }
+    let size = bi.fb_pitch as u64 * bi.fb_height as u64;
+    let pml4 = sched::current_pml4();
+    let flags = crate::vmm::PTE_RW | crate::vmm::PTE_USER;
+    let mut off = 0u64;
+    while off < size {
+        let Some(p) = crate::pmm::alloc_page() else { return -1 };
+        if !crate::vmm::map_page(pml4, BB_VA + off, p as u64, flags) {
+            crate::println!("bb: map fail at off={:#x}", off);
+            return -1;
+        }
+        off += 4096;
+    }
+    BB_VA as i64
+}
+
+unsafe fn cstr(ptr: *const u8) -> &'static str {
+    let len = (0..512).position(|i| *ptr.add(i) == 0).unwrap_or(512);
+    let slice = core::slice::from_raw_parts(ptr, len);
+    str::from_utf8_unchecked(slice)
+}

@@ -1,0 +1,17 @@
+[package]
+name = "tableos-kernel"
+version = "0.1.0"
+edition = "2021"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+debug = false
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+debug = false

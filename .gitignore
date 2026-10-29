@@ -1,0 +1,26 @@
+# ---- Rust / Zig 构建产物 ----
+**/target/
+/build/
+/dist/
+
+# ---- 磁盘镜像 ----
+*.img
+*.iso
+*.vdi
+*.vmdk
+*.raw
+
+# ---- 运行时 / 环境 ----
+/.vbox/
+*.log
+*.o
+*.pdb
+.DS_Store
+__pycache__/
+github_login_cookies.json
+
+# ---- 编辑器 / IDE ----
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,13 @@
+[workspace]
+members = ["e1wm", "e1apfs", "exaltop", "e1dm", "e1vfsx"]
+resolver = "2"
+
+[profile.dev]
+opt-level = 2
+debug = false
+panic = "abort"
+
+[profile.release]
+opt-level = "s"
+debug = false
+panic = "abort"
