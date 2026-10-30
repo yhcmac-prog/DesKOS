@@ -1,5 +1,7 @@
 # DesKOS / tAbLeOS
 
+[简体中文](README.zh-CN.md) | **English**
+
 A tiny from-scratch x86_64 hobby OS. MBR bootsector → stage2 → Rust kernel → ring3 userspace.
 
 - **DesKOS** (`BRAND=desk`) — open source (MIT), this repository's public face
