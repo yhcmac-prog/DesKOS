@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
-"""mkkeys.py - generate activation keys for tAbLeOS.
+"""mkkeys.py - generate tAbLeOS activation keys (PUBLIC SAFE VERSION).
 
-Algorithm (must match kernel brand.rs verify_key exactly):
+This file lives in the open-source DesKOS tree and deliberately does NOT
+contain the permanent-key body constant. Only one-time public-beta keys
+(serial 00..99) can be generated here. The permanent-key body ("ANDFREE"
+in the private tAbLeOS tree) is intentionally absent — PERM_FULL in
+kernel/src/brand.rs is also zeroed for BRAND=desk builds.
+
+Algorithm (must match kernel brand.rs try_activate exactly):
   1. Strip dashes: "XXXX-XXXX-XXXX-XXXX" → 16 chars
   2. Map each char to 0..35 (A-Z=0..25, 0-9=26..35)
   3. Polynomial rolling hash: acc = (acc * 36 + val) mod 65521, starting acc=0
   4. VALID iff hash of all 16 chars == 0
 
-Key layout (valid=hash==0):
-  Permanent: payload[0..3] = 'PERM', payload[4..11] = fixed ("ANDFREE"),
-              payload[12..15] = checksum → 16 chars total
-  One-time:  payload[0..1] = 2-digit serial (00..99), payload[2..11] = random,
-              payload[12..15] = checksum → 16 chars total
+One-time key layout (valid=hash==0):
+  payload[0..1] = 2-digit serial 00..99
+  payload[2..11] = random (10 chars)
+  payload[12..15] = checksum (hash==0)
+  Total 16 chars. Serial must be consumed once via license.cfg on e1fss root.
 
-Verification for one-time also checks serial < 100 AND serial not consumed
-(recorded in license.cfg on the e1fss root after activation).
+Permanent key generation is intentionally NOT exposed in this tree.
+The private tAbLeOS build contains the PERM_BODY constant and runs
+PERM_FULL substitution at kernel compile time.
 """
 import secrets
 import sys
 
 MOD = 65521  # largest prime < 2^16
 CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-PERM_PREFIX = "PERM"
-PERM_BODY = "ANDFREE"
 
 
 def char_val(c):
@@ -41,21 +46,14 @@ def make_key(payload12):
     """Given the first 12 chars (prefix+serial+random), compute 4 checksum
     chars ck such that rolling_hash(payload12 + ck) == 0.
 
-    Since rolling_hash(payload12 + ck) = (rolling_hash(payload12) * 36^4 +
-    rolling_hash(ck)) mod MOD, we need rolling_hash(ck) == target where
-    target = (MOD - rolling_hash(payload12) * 36^4) mod MOD.
-    We brute-force 4-char combinations to find one whose hash equals target.
+    Brute-force 4-char combinations (36^4 = 1.6M, trivial in Python).
     """
     h12 = rolling_hash(payload12)
     power = pow(36, 4, MOD)
     target = (MOD - (h12 * power) % MOD) % MOD
-    # brute-force ck (36^4 = 1679616, fast in Python)
     for c3 in range(36):
         for c2 in range(36):
             for c1 in range(36):
-                # for each single c0, rolling_hash of 4 chars is:
-                #   (((0*36 + c3)*36 + c2)*36 + c1)*36 + c0  = c3*36^3 + c2*36^2 + c1*36 + c0
-                # we need this == target
                 head = (((0 * 36 + c3) * 36 + c2) * 36 + c1) % MOD
                 c0 = (target - head * 36 + MOD) % MOD
                 if c0 < 36:
@@ -66,39 +64,21 @@ def make_key(payload12):
     raise RuntimeError("no ck found — should never happen")
 
 
-def gen_perm_key():
-    payload12 = (PERM_PREFIX + PERM_BODY).ljust(12, "A")
-    return make_key(payload12)
-
-
 def gen_one_time_key(serial):
-    assert 0 <= serial < 100
+    """Generate a single public-beta one-time key for the given serial 00..99."""
+    assert 0 <= serial < 100, f"serial {serial} out of range (0..99)"
     sn = f"{serial:02d}"
     rand = "".join(secrets.choice(CHARSET) for _ in range(10))
     payload12 = sn + rand
     return make_key(payload12)
 
 
-def main():
-    out_path = sys.argv[1] if len(sys.argv) > 1 else "build/activation-keys.txt"
-    perm = gen_perm_key()
-    ones = [gen_one_time_key(i) for i in range(100)]
-    with open(out_path, "w") as f:
-        f.write(f"# tAbLeOS activation keys - {out_path}\n")
-        f.write(f"# permanent (personal use):\n")
-        f.write(f"PERM {perm}\n")
-        f.write(f"# one-time (public test, 100 keys, serial 00..99):\n")
-        for i, k in enumerate(ones):
-            f.write(f"{i:02d} {k}\n")
-    print(f"mkkeys: wrote {out_path} (1 perm + 100 one-time)")
-    # sanity verify
-    assert verify(perm), f"perm key verify fail {perm}"
-    for i, k in enumerate(ones):
-        assert verify(k, serial=i), f"serial {i} verify fail {k}"
-    print("all keys self-verified ✓")
+def gen_one_time_batch(start=0, count=100):
+    """Generate a contiguous range of one-time public-beta keys."""
+    return [(f"{i:02d}", gen_one_time_key(i)) for i in range(start, start + count)]
 
 
-def verify(key_str, serial=None):
+def verify_one_time(key_str, serial=None):
     """Python-side verify (mirrors kernel brand.rs). Used for self-check."""
     cleaned = key_str.replace("-", "").upper()
     if len(cleaned) != 16 or any(c not in CHARSET for c in cleaned):
@@ -106,15 +86,31 @@ def verify(key_str, serial=None):
     h = rolling_hash(cleaned)
     if h != 0:
         return False
-    # perm: payload[0..4] == "PERM"
-    if cleaned[0:4] == PERM_PREFIX:
-        return True
-    # one-time: payload[0..2] must be serial
     if serial is not None:
         sn_char = f"{serial:02d}"
         if cleaned[0:2] != sn_char:
             return False
     return True
+
+
+def main():
+    out_path = sys.argv[1] if len(sys.argv) > 1 else "build/activation-keys.txt"
+    keys = gen_one_time_batch(0, 100)
+    with open(out_path, "w") as f:
+        f.write(f"# tAbLeOS public beta activation keys\n")
+        f.write(f"# generated by tools/mkkeys.py (public-safe one-time keys)\n")
+        f.write(f"# serial 00..99 — each works ONCE, consumed by license.cfg\n")
+        f.write(f"#\n")
+        f.write(f"# Note: permanent keys are NOT generated here.\n")
+        f.write(f"#       Those are issued privately by the project author.\n")
+        f.write(f"#\n")
+        for serial, key in keys:
+            f.write(f"{serial} {key}\n")
+    print(f"mkkeys: wrote {out_path} ({len(keys)} one-time keys 00..{99})")
+    # self-verify
+    for serial, key in keys:
+        assert verify_one_time(key, serial=int(serial)), f"serial {serial} verify fail {key}"
+    print("all keys self-verified ✓")
 
 
 if __name__ == "__main__":

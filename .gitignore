@@ -10,6 +10,15 @@
 *.vmdk
 *.raw
 
+# ---- 密钥 / 激活产物（永远不进仓库）----
+activation-keys.txt
+license.cfg
+*.key
+*.perm
+
+# ---- 私有 tAbLeOS 永久密钥 ----
+# PERM_FULL 常量只存在于私有构建树；DesKOS 源树里必须始终为零值
+
 # ---- 运行时 / 环境 ----
 /.vbox/
 *.log

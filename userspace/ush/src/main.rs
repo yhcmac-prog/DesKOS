@@ -1,4 +1,13 @@
-//! ush: tAbLeOS user shell, talks to the serial console via syscalls.
+//! ush: user shell shared by DesKOS (open-source) and tAbLeOS (closed-source).
+//!
+//! DesKOS build (`--cfg brand="desk"`):
+//!   - always shows the DesKOS MIT banner
+//!   - no activation gate — `need_activation()` is stubbed to false
+//!   - `activate` command prints "no activation needed" and exits
+//!
+//! tAbLeOS build (`--cfg brand="table"`):
+//!   - activation gate is real; premium commands need `try_activate()`
+//!   - banner switches per activation state
 
 #![no_std]
 #![no_main]
@@ -12,11 +21,12 @@ fn puts(s: &[u8]) {
     write(1, s);
 }
 
-/// runtime brand (switched by activation state)
-#[cfg(brand = "desk")]
-const BANNER_TABLE: &str = "\ntAbLeOS user shell (e1sh)\nClosed source, all rights reserved\ntype 'help' for commands\n";
+/// Banners chosen at compile time based on brand cfg.
+/// DesKOS build always shows the MIT-licensed banner; tAbLeOS build
+/// shows the closed-source banner (switched to BANNER_DESK for unlicensed fallback).
 #[cfg(brand = "desk")]
 const BANNER_DESK: &str = "\nDesKOS user shell (e1sh)\nOpen source under the MIT License\ntype 'help' for commands\n";
+
 #[cfg(not(brand = "desk"))]
 const BANNER_TABLE: &str = "\ntAbLeOS user shell (e1sh)\nClosed source, all rights reserved\ntype 'help' for commands\n";
 #[cfg(not(brand = "desk"))]
