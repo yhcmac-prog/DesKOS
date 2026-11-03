@@ -29,8 +29,12 @@ else
 fi
 
 echo "== [3/6] userspace (single build, edition=workstation for full set) =="
-# Userspace ELFs are edition-agnostic: e1wm/e1apfs only differ by whether
-# they're included in the e1fss image. We always build the full set here.
+# Userspace ELFs are edition-agnostic: e1wm/e1dm/exaltop have brand cfg,
+# e1apfs/e1vfsx are table-exclusive (no brand cfg, must not ship in DesKOS).
+# Always wipe table-exclusive artefacts first so a desk-only build does not
+# inherit stale binaries from a prior table build.
+rm -f build/e1apfs build/e1vfsx
+
 for BRAND_ARG in ${BRAND:-both}; do
     case "$BRAND_ARG" in
         both) inner_brands="table desk" ;;
@@ -42,16 +46,23 @@ for BRAND_ARG in ${BRAND:-both}; do
         ( cd apps/e1wm && cargo rustc -- --cfg "brand=\"$b\"" )
         ( cd apps/exaltop && cargo rustc -- --cfg "brand=\"$b\"" )
         ( cd apps/e1dm && cargo rustc -- --cfg "brand=\"$b\"" )
-        ( cd apps/e1vfsx && cargo rustc )
-        ( cd apps/e1apfs && cargo rustc )
         cp userspace/target/x86_64-unknown-none/debug/hello build/hello
         cp apps/target/x86_64-unknown-none/debug/e1wm build/e1wm
         cp apps/target/x86_64-unknown-none/debug/exaltop build/exaltop
         cp apps/target/x86_64-unknown-none/debug/e1dm build/e1dm
-        cp apps/target/x86_64-unknown-none/debug/e1vfsx build/e1vfsx
-        cp apps/target/x86_64-unknown-none/debug/e1apfs build/e1apfs
     done
 done
+
+# table-exclusive apps: only compile when table is in the brand list
+case "${BRAND:-both}" in
+    desk) echo "  (skip e1apfs/e1vfsx — DesKOS exclusive zone)" ;;
+    *)
+        ( cd apps/e1vfsx && cargo rustc )
+        ( cd apps/e1apfs && cargo rustc )
+        cp apps/target/x86_64-unknown-none/debug/e1vfsx build/e1vfsx
+        cp apps/target/x86_64-unknown-none/debug/e1apfs build/e1apfs
+        ;;
+esac
 
 build_brand_edition() {
     BRAND="$1"

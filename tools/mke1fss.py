@@ -201,14 +201,22 @@ if __name__ == "__main__":
         brand_name, license_line = "DesKOS", "DesKOS is open source under the MIT License"
     else:
         brand_name, license_line = "tAbLeOS", "tAbLeOS is closed source, all rights reserved"
+
+    # table-exclusive apps that must NOT ship in DesKOS builds
+    TABLE_EXCLUSIVE = {"e1apfs", "e1vfsx"}
+
     files = []
     # user programs built by build.sh
     for name, path in [("ush", "build/ush"), ("hello", "build/hello"),
                        ("e1wm", "build/e1wm"), ("e1apfs", "build/e1apfs"),
                        ("exaltop", "build/exaltop"), ("e1dm", "build/e1dm"),
                        ("e1vfsx", "build/e1vfsx")]:
-        if edition == "server" and name in ("e1wm", "e1apfs", "exaltop", "e1dm", "e1vfsx"):
-            continue  # server edition has no GUI tools
+        # desk brand: skip table-exclusive apps entirely
+        if brand == "desk" and name in TABLE_EXCLUSIVE:
+            continue
+        # server edition: no GUI tools
+        if edition == "server" and name in ("e1wm", "exaltop", "e1dm"):
+            continue
         if os.path.exists(path):
             with open(path, "rb") as f:
                 files.append((name, f.read()))
@@ -219,14 +227,16 @@ if __name__ == "__main__":
     files.append(("MOTD", f"Welcome to {brand_name}!\n".encode()))
     # demo.com for e1VFSx (8086 .com image: INT21h AH=09 print + AH=4C exit)
     # loads at DS:0x100; mov dx,0x10B; mov ah,09; int21; mov ah,4C; int21
-    demo_com = bytearray()
-    demo_com += bytes([0xBA, 0x0B, 0x01])  # mov dx, 0x10B
-    demo_com += bytes([0xB4, 0x09])         # mov ah, 0x09
-    demo_com += bytes([0xCD, 0x21])         # int 21h
-    demo_com += bytes([0xB4, 0x4C])         # mov ah, 0x4C
-    demo_com += bytes([0xCD, 0x21])         # int 21h
-    demo_com += b"Hello from e1VFSx!$\0\0\0\0"  # $-terminated msg + pad
-    files.append(("demo.com", bytes(demo_com)))
+    # Only bundled when e1vfsx is included (table brand, workstation edition)
+    if not (brand == "desk" or edition == "server"):
+        demo_com = bytearray()
+        demo_com += bytes([0xBA, 0x0B, 0x01])  # mov dx, 0x10B
+        demo_com += bytes([0xB4, 0x09])         # mov ah, 0x09
+        demo_com += bytes([0xCD, 0x21])         # int 21h
+        demo_com += bytes([0xB4, 0x4C])         # mov ah, 0x4C
+        demo_com += bytes([0xCD, 0x21])         # int 21h
+        demo_com += b"Hello from e1VFSx!$\0\0\0\0"  # $-terminated msg + pad
+        files.append(("demo.com", bytes(demo_com)))
     # .rit package payload for the e1wine test (built by build.sh)
     if os.path.exists("build/busybox.rit"):
         with open("build/busybox.rit", "rb") as f:
