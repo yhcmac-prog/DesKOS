@@ -12,7 +12,7 @@ pub const BRAND_NAME: &str = "DesKOS";
 pub const BRAND_NAME: &str = "tAbLeOS";
 
 #[cfg(brand = "desk")]
-pub const BRAND_LICENSE: &str = "Open source under the MIT License";
+pub const BRAND_LICENSE: &str = "Open source under the GNU GPL v3";
 #[cfg(not(brand = "desk"))]
 pub const BRAND_LICENSE: &str = "Closed source, all rights reserved";
 

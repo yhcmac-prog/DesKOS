@@ -4,7 +4,7 @@
 
 一个从零开始的 x86_64 小型实验操作系统。MBR 引导扇区 → stage2 → Rust 内核 → ring3 用户态。
 
-- **DesKOS**（`BRAND=desk`）—— 开源（MIT），本仓库发布的公开版本
+- **DesKOS**（`BRAND=desk`）—— 开源（GPLv3），本仓库发布的公开版本
 - **tAbLeOS**（`BRAND=table`）—— 闭源，专有变体
 
 两个品牌共用同一套源码、同一种磁盘镜像布局；split 完全是许可证 / 发行层面的划分。
@@ -117,7 +117,7 @@ tools/          mke1fss.py、mkrit.py、mkkeys.py、mkfont_rs.py、mkimage.py
 build.sh        一键构建：引导扇区 → 内核 → 用户态 → 磁盘镜像
 run-vbox.sh    创建并启动 VirtualBox 虚拟机（headless 或 GUI）
 sign_github.py  M9 发布工具 —— 创建 GitHub 仓库 + release + 上传产物
-LICENSE         双品牌许可（tAbLeOS 闭源 / DesKOS MIT）
+LICENSE         双品牌许可（tAbLeOS 闭源 / DesKOS GPLv3）
 ```
 
 ## 许可证
@@ -125,6 +125,6 @@ LICENSE         双品牌许可（tAbLeOS 闭源 / DesKOS MIT）
 双品牌 —— 详见 [LICENSE](LICENSE)：
 
 - **tAbLeOS**（`BRAND=table`）：闭源，保留所有权利
-- **DesKOS**（`BRAND=desk`）：MIT License，本仓库发布的版本
+- **DesKOS**（`BRAND=desk`）：GNU GPL v3，本仓库发布的版本
 
 本仓库的构建结果是 **DesKOS** 变体。

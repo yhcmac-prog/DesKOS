@@ -281,12 +281,12 @@ impl Exaltop {
     }
 
     #[cfg(brand = "desk")]
-    const WELCOME: &str = "Welcome to exalTOP on DesKOS!\nOpen source under the MIT License\n\nDock: Terminal / Files / About\nAlt+Q: quit\nAlt+L: toggle CN/EN";
+    const WELCOME: &str = "Welcome to exalTOP on DesKOS!\nOpen source under the GNU GPL v3\n\nDock: Terminal / Files / About\nAlt+Q: quit\nAlt+L: toggle CN/EN";
     #[cfg(not(brand = "desk"))]
     const WELCOME: &str = "Welcome to exalTOP on tAbLeOS!\nClosed source, all rights reserved\n\nDock: Terminal / Files / About\nAlt+Q: quit\nAlt+L: toggle CN/EN";
 
     #[cfg(brand = "desk")]
-    const ABOUT: &str = "exalTOP 0.1\nA Gershwin-inspired desktop\nfor DesKOS\n\nMIT License applies to DesKOS";
+    const ABOUT: &str = "exalTOP 0.1\nA Gershwin-inspired desktop\nfor DesKOS\n\nGNU GPL v3 applies to DesKOS";
     #[cfg(not(brand = "desk"))]
     const ABOUT: &str = "exalTOP 0.1\nA Gershwin-inspired desktop\nfor tAbLeOS\n\ntAbLeOS is closed source";
 

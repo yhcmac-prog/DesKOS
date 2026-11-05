@@ -4,7 +4,7 @@
 
 A tiny from-scratch x86_64 hobby OS. MBR bootsector → stage2 → Rust kernel → ring3 userspace.
 
-- **DesKOS** (`BRAND=desk`) — open source (MIT), this repository's public face
+- **DesKOS** (`BRAND=desk`) — open source (GPLv3), this repository's public face
 - **tAbLeOS** (`BRAND=table`) — closed source, proprietary variant
 
 Both brands share the same codebase and produce the same disk-image layouts;
@@ -119,7 +119,7 @@ tools/          mke1fss.py, mkrit.py, mkkeys.py, mkfont_rs.py, mkimage.py
 build.sh        one-shot build: bootsectors → kernel → apps → disk image
 run-vbox.sh    create + boot a VirtualBox VM (headless or GUI)
 sign_github.py M9 publish helper — creates GitHub repo + release + uploads
-LICENSE         dual-brand (tAbLeOS closed, DesKOS MIT)
+LICENSE         dual-brand (tAbLeOS closed, DesKOS GPLv3)
 ```
 
 ## License
@@ -127,6 +127,6 @@ LICENSE         dual-brand (tAbLeOS closed, DesKOS MIT)
 Dual-brand — see [LICENSE](LICENSE):
 
 - **tAbLeOS** (`BRAND=table`): closed source, all rights reserved
-- **DesKOS** (`BRAND=desk`): MIT License, this repository
+- **DesKOS** (`BRAND=desk`): GNU GPL v3, this repository
 
 If you build this repository you are building the **DesKOS** variant.

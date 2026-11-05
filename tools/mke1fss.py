@@ -198,7 +198,7 @@ if __name__ == "__main__":
     brand = sys.argv[2] if len(sys.argv) > 2 else "table"
     edition = sys.argv[3] if len(sys.argv) > 3 else "workstation"
     if brand == "desk":
-        brand_name, license_line = "DesKOS", "DesKOS is open source under the MIT License"
+        brand_name, license_line = "DesKOS", "DesKOS is open source under the GNU GPL v3"
     else:
         brand_name, license_line = "tAbLeOS", "tAbLeOS is closed source, all rights reserved"
 

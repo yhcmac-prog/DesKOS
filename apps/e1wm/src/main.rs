@@ -445,7 +445,7 @@ impl E1wm {
     }
 
     #[cfg(brand = "desk")]
-    const WELCOME: &str = "Welcome to DesKOS!\nOpen source under the MIT License\n\nAlt+1: terminal\nAlt+I: install\nAlt+Q: quit\nAlt+L: toggle CN/EN";
+    const WELCOME: &str = "Welcome to DesKOS!\nOpen source under the GNU GPL v3\n\nAlt+1: terminal\nAlt+I: install\nAlt+Q: quit\nAlt+L: toggle CN/EN";
     #[cfg(not(brand = "desk"))]
     const WELCOME: &str = "Welcome to tAbLeOS!\nClosed source, all rights reserved\n\nAlt+1: terminal\nAlt+I: install\nAlt+Q: quit\nAlt+L: toggle CN/EN";
 

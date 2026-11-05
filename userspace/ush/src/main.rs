@@ -1,7 +1,7 @@
 //! ush: user shell shared by DesKOS (open-source) and tAbLeOS (closed-source).
 //!
 //! DesKOS build (`--cfg brand="desk"`):
-//!   - always shows the DesKOS MIT banner
+//!   - always shows the DesKOS GPL banner
 //!   - no activation gate — `need_activation()` is stubbed to false
 //!   - `activate` command prints "no activation needed" and exits
 //!
@@ -22,15 +22,15 @@ fn puts(s: &[u8]) {
 }
 
 /// Banners chosen at compile time based on brand cfg.
-/// DesKOS build always shows the MIT-licensed banner; tAbLeOS build
+/// DesKOS build always shows the GPL-licensed banner; tAbLeOS build
 /// shows the closed-source banner (switched to BANNER_DESK for unlicensed fallback).
 #[cfg(brand = "desk")]
-const BANNER_DESK: &str = "\nDesKOS user shell (e1sh)\nOpen source under the MIT License\ntype 'help' for commands\n";
+const BANNER_DESK: &str = "\nDesKOS user shell (e1sh)\nOpen source under the GNU GPL v3\ntype 'help' for commands\n";
 
 #[cfg(not(brand = "desk"))]
 const BANNER_TABLE: &str = "\ntAbLeOS user shell (e1sh)\nClosed source, all rights reserved\ntype 'help' for commands\n";
 #[cfg(not(brand = "desk"))]
-const BANNER_DESK: &str = "\nDesKOS user shell (e1sh, unlicensed)\nOpen source under the MIT License\ntype 'help' for commands\ntype 'activate' to unlock premium tAbLeOS features\n";
+const BANNER_DESK: &str = "\nDesKOS user shell (e1sh, unlicensed)\nOpen source under the GNU GPL v3\ntype 'help' for commands\ntype 'activate' to unlock premium tAbLeOS features\n";
 
 /// strip trailing CR/LF/space from a raw console line
 fn line_of(b: &[u8]) -> &str {
@@ -343,7 +343,7 @@ pub extern "C" fn _start() -> ! {
             }
             Some("status") => {
                 #[cfg(brand = "desk")]
-                { puts(b"DesKOS (open source MIT) -- all features available\n"); }
+                { puts(b"DesKOS (open source GPLv3) -- all features available\n"); }
                 #[cfg(not(brand = "desk"))]
                 {
                     if brand_status() > 0 {
